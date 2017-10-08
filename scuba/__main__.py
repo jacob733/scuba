@@ -171,7 +171,10 @@ class ScubaDive(object):
 
     @property
     def is_remote_docker(self):
-        return 'DOCKER_HOST' in os.environ
+        if 'DOCKER_HOST' in os.environ:
+            if os.environ['DOCKER_HOST'] and not os.environ['DOCKER_HOST'].startswith('unix://'):
+                return True
+        return False
 
     def add_env(self, name, val):
         '''Add an environment variable to the docker run invocation

@@ -686,3 +686,33 @@ class TestMain(TmpDirTestCase):
         assert_equal(len(expected), len(lines))
         for i in range(len(expected)):
             assert_seq_equal(expected[i], lines[i].split('\t'))
+
+    def test_is_remote_docker_local(self):
+        '''Verify remote docker check with unset DOCKER_HOST'''
+        with mock.patch.dict('os.environ'):
+            if 'DOCKER_HOST' in os.environ:
+                del os.environ['DOCKER_HOST']
+            diver = main.ScubaDive('', image_override = DOCKER_IMAGE)
+            assert_false(diver.is_remote_docker)
+
+    def test_is_remote_docker_local_explicit(self):
+        '''Verify remote docker check with DOCKER_HOST set to unix:///var/run/docker.sock'''
+        with mock.patch.dict('os.environ'):
+            os.environ['DOCKER_HOST'] = 'unix:///var/run/docker.sock'
+            diver = main.ScubaDive('', image_override = DOCKER_IMAGE)
+            assert_false(diver.is_remote_docker)
+
+    def test_is_remote_docker_local_empty_string(self):
+        '''Verify remote docker check with DOCKER_HOST set to an empty string'''
+        with mock.patch.dict('os.environ'):
+            os.environ['DOCKER_HOST'] = ''
+            diver = main.ScubaDive('', image_override = DOCKER_IMAGE)
+            assert_false(diver.is_remote_docker)
+
+    def test_is_remote_docker_remote(self):
+        '''Verify remote docker check with DOCKER_HOST set to tcp://10.0.0.3:1234'''
+        with mock.patch.dict('os.environ'):
+            os.environ['DOCKER_HOST'] = 'tcp://10.0.0.3:1234'
+            diver = main.ScubaDive('', image_override = DOCKER_IMAGE)
+            assert_true(diver.is_remote_docker)
+
