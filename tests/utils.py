@@ -116,7 +116,7 @@ class TmpDirTestCase(unittest.TestCase):
     def setUp(self):
         # Run each test in its own temp directory
         self.orig_path = os.getcwd()
-        self.path = tempfile.mkdtemp('scubatest')
+        self.path = tempfile.mkdtemp('scubatest',dir=self.orig_path)
         os.chdir(self.path)
         logging.info('Temp path: ' + self.path)
 

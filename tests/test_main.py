@@ -339,6 +339,11 @@ class TestMain(TmpDirTestCase):
     def test_arbitrary_docker_args(self):
         '''Verify -d successfully passes arbitrary docker arguments'''
 
+        in_container = scuba.dockerutil.get_my_container_id() is not None
+        exp_retval = 0
+        if in_container:
+            exp_retval = 128
+
         with open('.scuba.yml', 'w') as f:
             f.write('image: {}\n'.format(DOCKER_IMAGE))
 
@@ -353,9 +358,10 @@ class TestMain(TmpDirTestCase):
                 '-d=-v {}:{}:ro,z'.format(tempf.name, data_path),
                 'cat', data_path,
             ]
-            out, _ = self.run_scuba(args)
+            out, _ = self.run_scuba(args, exp_retval=exp_retval)
 
-        assert_str_equalish(out, data)
+        if not in_container:
+            assert_str_equalish(out, data)
 
 
     ############################################################################

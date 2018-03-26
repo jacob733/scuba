@@ -8,9 +8,9 @@ import shutil
 
 
 class InTempDir(object):
-    def __init__(self, suffix='', prefix='tmp', delete=True):
+    def __init__(self, suffix='', prefix='tmp', directory=None, delete=True):
         self.delete = delete
-        self.temp_path = tempfile.mkdtemp(suffix=suffix, prefix=prefix)
+        self.temp_path = tempfile.mkdtemp(suffix=suffix, prefix=prefix, dir=directory)
 
     def __enter__(self):
         self.orig_path = os.getcwd()
@@ -24,7 +24,7 @@ class InTempDir(object):
             shutil.rmtree(self.temp_path)
 
 def test1():
-    with InTempDir(prefix='scuba-systest'):
+    with InTempDir(prefix='scuba-systest', directory='.'):
         with open('.scuba.yml', 'w+t') as f:
             f.write('image: debian:8.2\n')
 

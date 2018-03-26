@@ -12,6 +12,8 @@ import argparse
 import tempfile
 import shutil
 import collections
+import random
+import string
 
 from .cmdlineargs import *
 from .compat import File, StringIO
@@ -21,7 +23,7 @@ from .config import find_config, load_config, ScubaConfig, \
 from .utils import *
 from .version import __version__
 from .dockerutil import get_image_command, get_image_entrypoint, make_vol_opt, \
-        DockerError, DockerExecuteError
+        DockerError, DockerExecuteError, get_my_container_id, get_path_mount
 from . import dockerutil
 
 # This is the path where all scuba-related things will be bind-mounted into the
@@ -29,7 +31,10 @@ from . import dockerutil
 SCUBA_DIR = '/.scuba'
 
 def appmsg(fmt, *args):
-    print('scuba: ' + fmt.format(*args), file=sys.stderr)
+    if args:
+        print('scuba: ' + fmt.format(*args), file=sys.stderr)
+    else:
+        print('scuba: ' + fmt, file=sys.stderr)
 
 def verbose_msg(fmt, *args):
     if g_verbose:
@@ -111,6 +116,8 @@ class ScubaDive(object):
         self.volumes = []
         self.options = docker_args or []
         self.workdir = None
+        self.top_path = None
+        self.top_rel = None
 
         self.__locate_scubainit()
         self.__load_config()
@@ -188,6 +195,8 @@ class ScubaDive(object):
         '''
         if options is None:
             options = []
+        if get_my_container_id() is not None:
+            hostpath, contpath, _, options = get_path_mount(hostpath)
         self.volumes.append((hostpath, contpath, options))
 
     def add_option(self, option):
@@ -228,19 +237,15 @@ class ScubaDive(object):
             self.config = ScubaConfig(image=None)
         except ConfigError as cfgerr:
             raise ScubaError(str(cfgerr))
-
-        # Mount scuba root directory at the same path in the container...
-        self.add_volume(top_path, top_path)
-
-        # ...and set the working dir relative to it
-        self.set_workdir(os.path.join(top_path, top_rel))
+        self.top_path = top_path
+        self.top_rel = top_rel
 
     def __make_scubadir(self):
         '''Make temp directory where all ancillary files are bind-mounted
         '''
         self.__scubadir_hostpath = tempfile.mkdtemp(prefix='scubadir')
         self.__scubadir_contpath = '/.scuba'
-        self.add_volume(self.__scubadir_hostpath, self.__scubadir_contpath)
+        #self.add_volume(self.__scubadir_hostpath, self.__scubadir_contpath)
 
     def __setup_native_run(self):
         # These options are appended to mounted volume arguments
@@ -248,6 +253,21 @@ class ScubaDive(object):
         # with SELinux. See `man docker-run` for more information.
         self.vol_opts = ['z']
 
+        # Mount scuba root directory at the same path in the container...
+        self.add_volume(self.top_path, self.top_path)
+
+        # Running in container
+        if get_my_container_id() is not None:
+            optiter = iter(self.options)
+            for opt in optiter:
+                if opt == '-v' or opt == '--volume':
+                    vol = next(optiter).split(':')[0]
+                    # This is a host volume
+                    if '/' in vol:
+                        raise ScubaError("Host volume {} requested, which is not possible when running in container")
+
+        # ...and set the working dir relative to it
+        self.set_workdir(os.path.join(self.top_path, self.top_rel))
 
         # Pass variables to scubainit
         self.add_env('SCUBAINIT_UMASK', '{:04o}'.format(get_umask()))
@@ -405,6 +425,57 @@ class ScubaDive(object):
 
         return args
 
+    def get_docker_cmdline_create(self, container):
+        args = ['docker', 'create',
+            # interactive: keep STDIN open
+            '-i',
+
+            # remove container after exit
+            '--rm',
+
+            # set a specific name
+            '--name', container,
+        ]
+
+        for name,val in self.env_vars.items():
+            args.append('--env={}={}'.format(name, val))
+
+        for hostpath, contpath, options in self.__get_vol_opts():
+            args.append(make_vol_opt(hostpath, contpath, options))
+
+        if self.workdir:
+            args += ['-w', self.workdir]
+
+        args += self.options
+
+        # Docker image
+        args.append(self.context.image)
+
+        # Command to run in container
+        args += self.docker_cmd
+
+        return args
+
+    def get_docker_cmdline_cp(self, container):
+        args = ['docker', 'cp',
+            '-a',
+        ]
+
+        args.append(self.__scubadir_hostpath)
+
+        args.append('{}:{}'.format(container, self.__scubadir_contpath))
+        return args
+
+    def get_docker_cmdline_start(self, container):
+        args = ['docker', 'start',
+            # interactive: keep STDIN open
+            '-i',
+        ]
+
+        # Docker container
+        args.append(container)
+
+        return args
 
 def run_scuba(scuba_args):
     dive = ScubaDive(
@@ -426,27 +497,54 @@ def run_scuba(scuba_args):
 
     try:
         dive.prepare()
-        run_args = dive.get_docker_cmdline()
+        container_name = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(40))
+        create_args = dive.get_docker_cmdline_create(container_name)
+        cp_args = dive.get_docker_cmdline_cp(container_name)
+        start_args = dive.get_docker_cmdline_start(container_name)
 
         if g_verbose or scuba_args.dry_run:
             print(str(dive))
             print()
 
-            appmsg('Docker command line:')
-            print('$ ' + format_cmdline(run_args))
+            appmsg('Docker create command line:')
+            print('$ ' + format_cmdline(create_args))
+            appmsg('Docker cp command line:')
+            print('$ ' + format_cmdline(cp_args))
+            appmsg('Docker start command line:')
+            print('$ ' + format_cmdline(start_args))
 
         if scuba_args.dry_run:
             sys.exit(42)
 
         # Explicitly pass sys.stdin/stdout/stderr so they apply to the
         # child process if overridden (by tests).
-        return dockerutil.call(
-                args = run_args,
+        r = dockerutil.call(
+                args = create_args,
+                stdin = sys.stdin,
+                stdout = None,
+                stderr = sys.stderr,
+                )
+
+        if r != 0:
+            return r
+
+        r = dockerutil.call(
+                args = cp_args,
                 stdin = sys.stdin,
                 stdout = sys.stdout,
                 stderr = sys.stderr,
                 )
 
+        if r != 0:
+            return r
+
+        r = dockerutil.call(
+                args = start_args,
+                stdin = sys.stdin,
+                stdout = sys.stdout,
+                stderr = sys.stderr,
+                )
+        return r
     finally:
         if scuba_args.dry_run:
             appmsg("Temp files not cleaned up")
