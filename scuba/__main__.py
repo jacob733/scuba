@@ -397,13 +397,16 @@ class ScubaDive(object):
         for hostpath, contpath, options in self.volumes:
             yield hostpath, contpath, options + self.vol_opts
 
-    def get_docker_cmdline(self):
-        args = ['docker', 'run',
+    def get_docker_cmdline_create(self, container):
+        args = ['docker', 'create',
             # interactive: keep STDIN open
             '-i',
 
             # remove container after exit
             '--rm',
+
+            # set a specific name
+            '--name', container,
         ]
 
         for name,val in self.env_vars.items():
