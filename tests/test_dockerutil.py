@@ -130,7 +130,26 @@ container_inspect_string = '''[
             },
             "Name": "overlay2"
         },
-        "Mounts": [],
+        "Mounts": [
+            {
+                "Type": "volume",
+                "Name": "testvolume",
+                "Source": "/var/lib/docker/volumes/testvolume/_data",
+                "Destination": "/tester",
+                "Driver": "local",
+                "Mode": "z",
+                "RW": true,
+                "Propagation": ""
+            },
+            {
+                "Type": "bind",
+                "Source": "/home/user2",
+                "Destination": "/usermount",
+                "Mode": "",
+                "RW": true,
+                "Propagation": "rprivate"
+            }
+        ],
         "Config": {
             "Hostname": "4c3d00d1870c",
             "Domainname": "",
@@ -411,3 +430,54 @@ class TestDockerutil(TestCase):
     def test_get_path_mount_volume_mount(self):
         '''Get path mount for a named volume'''
         
+        container_id = container_inspect_data[0]['Id']
+        def mocked_popen(popen_args, stdout = None, stderr = None):
+            assert_equal(len(popen_args), 3)
+            assert_equal(popen_args[0], 'docker')
+            assert_equal(popen_args[1], 'inspect')
+            assert_equal(popen_args[2], container_id)
+
+            def mocked_communicate(self, stdin = None):
+                return (self.stdout.read(), self.stderr.read())
+
+            ret = type('popen_mock_obj', (), {})()
+            ret.stdout = scuba.compat.StringIO(container_inspect_string)
+            ret.stderr = scuba.compat.StringIO()
+            ret.returncode = 0
+            ret.communicate = MethodType(mocked_communicate, ret)
+            return ret
+
+        with mock.patch('scuba.dockerutil.Popen', mocked_popen):
+            host_path, mount_path, rel_path, mount_options = uut.get_path_mount("/tester/workspace", container_id)
+            assert_equal(host_path, "testvolume")
+            assert_equal(mount_path, "/tester")
+            assert_equal(rel_path, "workspace")
+            assert_equal(mount_options, ["z"])
+
+    def test_get_path_mount_bind_mount(self):
+        '''Get path mount for a host volume'''
+        
+        container_id = container_inspect_data[0]['Id']
+        def mocked_popen(popen_args, stdout = None, stderr = None):
+            assert_equal(len(popen_args), 3)
+            assert_equal(popen_args[0], 'docker')
+            assert_equal(popen_args[1], 'inspect')
+            assert_equal(popen_args[2], container_id)
+
+            def mocked_communicate(self, stdin = None):
+                return (self.stdout.read(), self.stderr.read())
+
+            ret = type('popen_mock_obj', (), {})()
+            ret.stdout = scuba.compat.StringIO(container_inspect_string)
+            ret.stderr = scuba.compat.StringIO()
+            ret.returncode = 0
+            ret.communicate = MethodType(mocked_communicate, ret)
+            return ret
+
+        with mock.patch('scuba.dockerutil.Popen', mocked_popen):
+            host_path, mount_path, rel_path, mount_options = uut.get_path_mount("/usermount/hostwork", container_id)
+            assert_equal(host_path, "/home/user2")
+            assert_equal(mount_path, "/usermount")
+            assert_equal(rel_path, "hostwork")
+            assert_equal(mount_options, [""])
+
